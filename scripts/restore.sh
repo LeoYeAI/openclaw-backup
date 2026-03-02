@@ -49,6 +49,7 @@ if [ -f "$MANIFEST" ]; then
 import json, sys
 d = json.load(open('${MANIFEST}'))
 print(f\"  Backup name : {d['backup_name']}\")
+print(f\"  Agent name  : {d.get('agent_name', 'unknown')}\")
 print(f\"  Created     : {d['timestamp']}\")
 print(f\"  From host   : {d['hostname']}\")
 print(f\"  OC version  : {d.get('openclaw_version', 'unknown')}\")

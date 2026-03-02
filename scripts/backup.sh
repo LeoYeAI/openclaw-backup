@@ -7,7 +7,16 @@ set -euo pipefail
 
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 OUTPUT_DIR="${1:-/tmp/openclaw-backups}"
-BACKUP_NAME="openclaw-backup_${TIMESTAMP}"
+
+# Agent name: read from IDENTITY.md if present, fallback to hostname
+WORKSPACE_DIR="${HOME}/.openclaw/workspace"
+IDENTITY_FILE="${WORKSPACE_DIR}/IDENTITY.md"
+if [ -f "$IDENTITY_FILE" ]; then
+  AGENT_NAME=$(grep -m1 '\*\*Name:\*\*' "$IDENTITY_FILE" 2>/dev/null | sed 's/.*\*\*Name:\*\* *//' | tr -d '\r' | tr ' ' '-' | tr '[:upper:]' '[:lower:]')
+fi
+AGENT_NAME="${AGENT_NAME:-$(hostname)}"
+
+BACKUP_NAME="openclaw-backup_${AGENT_NAME}_${TIMESTAMP}"
 WORK_DIR="/tmp/${BACKUP_NAME}"
 OPENCLAW_HOME="${HOME}/.openclaw"
 
@@ -146,11 +155,12 @@ fi
 cat > "${WORK_DIR}/MANIFEST.json" <<EOF
 {
   "backup_name": "${BACKUP_NAME}",
+  "agent_name": "${AGENT_NAME}",
   "timestamp": "${TIMESTAMP}",
   "hostname": "$(hostname)",
   "openclaw_home": "${OPENCLAW_HOME}",
   "openclaw_version": "$(openclaw --version 2>/dev/null | head -1 || echo 'unknown')",
-  "created_by": "openclaw-backup skill v1.2",
+  "created_by": "openclaw-backup skill v1.5",
   "contents": {
     "workspace": true,
     "gateway_config": true,
