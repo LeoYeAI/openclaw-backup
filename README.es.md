@@ -4,32 +4,42 @@
 [![ClaWHub](https://img.shields.io/badge/ClaWHub-myclaw--backup-orange?style=flat-square)](https://clawhub.com/skills/myclaw-backup)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
+---
+
+## Acerca de MyClaw.ai
+
+**[MyClaw.ai](https://myclaw.ai)** es una plataforma de asistente personal con IA que proporciona a cada usuario un servidor completo con control total del código, acceso a la red y uso de herramientas. Tu agente IA no es solo un chatbot — puede escribir código, gestionar archivos, ejecutar scripts y ahora: hacer copias de seguridad de sí mismo y restaurarse en cualquier nueva instancia.
+
+Este skill forma parte del ecosistema abierto de skills de [MyClaw.ai](https://myclaw.ai). Se instala en cualquier instancia de OpenClaw en segundos.
+
+---
+
 # 🦞 OpenClaw Backup
 
-**Copia de seguridad y restauración con un clic para instancias OpenClaw.**
+**Copia de seguridad y restauración en un clic para instancias OpenClaw.**
 
-Respalda todo — espacio de trabajo, memoria, habilidades, credenciales, tokens de bot, claves API, historial de sesiones del agente — en un único archivo cifrado. Restaura en cualquier nueva instancia OpenClaw sin re-emparejamiento.
+Guarda todo — workspace, memoria, skills, credenciales, tokens de bot, claves API, historial de sesiones del agente — en un único archivo. Restaura en cualquier nueva instancia de OpenClaw sin volver a emparejar los canales.
 
-## ⚡ Instalación en una línea
+## ⚡ Instalación
 
 Solo dile a tu agente OpenClaw:
 
 > **"Ayúdame a instalar el backup"**
 
-O instala manualmente:
+O manualmente:
 ```bash
 clawhub install myclaw-backup
 ```
 
-## Qué se respalda
+## Qué se guarda
 
 | Componente | Detalles |
 |---|---|
-| 🧠 Espacio de trabajo | MEMORY.md, habilidades, archivos de agente, SOUL.md, USER.md |
+| 🧠 Workspace | MEMORY.md, skills, archivos del agente, SOUL.md, USER.md |
 | ⚙️ Configuración | openclaw.json (tokens de bot, claves API, config del modelo) |
-| 🔑 Credenciales | Estado de emparejamiento del canal — sin re-emparejamiento tras restaurar |
+| 🔑 Credenciales | Estado de emparejamiento de canales — sin reemparejamiento al restaurar |
 | 📜 Sesiones | Historial completo de conversaciones del agente |
-| ⏰ Tareas cron | Todas las tareas programadas |
+| ⏰ Cron jobs | Todas las tareas programadas |
 | 🛡️ Scripts | Guardian, watchdog, start-gateway |
 
 ## Uso
@@ -39,36 +49,36 @@ clawhub install myclaw-backup
 bash scripts/backup.sh /tmp/openclaw-backups
 ```
 
-### Restaurar (siempre ejecutar primero en modo simulacro)
+### Restaurar (siempre dry-run primero)
 ```bash
 bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz --dry-run
 bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz
 ```
 
-### Interfaz del navegador (descargar / subir / restaurar)
+### Interfaz web
 ```bash
 bash scripts/serve.sh start --token $(openssl rand -hex 16) --port 7373
 # Abrir: http://localhost:7373/?token=TU_TOKEN
 ```
 
 ### Migrar a un nuevo servidor
-1. Inicia el servidor en la máquina antigua, copia la URL de descarga
-2. En la nueva máquina: instala OpenClaw → inicia el servidor → sube el backup → restaura
-3. Todos los canales se reconectan automáticamente — sin re-emparejamiento necesario
+1. Iniciar el servidor en la máquina antigua → descargar la copia de seguridad
+2. Nueva máquina: instalar OpenClaw → instalar skill → subir → restaurar
+3. Todos los canales se reconectan automáticamente — sin reemparejamiento
 
 ## ⚠️ Seguridad
 
-Esta habilidad maneja **datos altamente sensibles** (tokens de bot, claves API, credenciales).
+Este skill maneja **datos altamente sensibles** (tokens, claves API, credenciales).
 
-- Establece siempre `--token` al iniciar el servidor HTTP
-- Guarda los archivos de backup de forma segura (chmod 600 aplicado automáticamente)
-- Siempre ejecuta `--dry-run` antes de aplicar una restauración
-- Nunca expongas el servidor de backup a Internet sin TLS
-
-## ClaWHub
-
-Publicado en: https://clawhub.com/skills/myclaw-backup
+- `--token` obligatorio para el servidor HTTP (rechaza el inicio sin token)
+- Los archivos se establecen automáticamente en `chmod 600`
+- Siempre ejecutar `--dry-run` antes de una restauración
+- No exponer el servidor HTTP a internet sin TLS
 
 ---
 
-<p align="center">Desarrollado con <a href="https://myclaw.ai">MyClaw.ai</a></p>
+<p align="center">
+  <a href="https://myclaw.ai">
+    <img src="https://img.shields.io/badge/Powered%20by-MyClaw.ai-6366f1?style=for-the-badge" alt="Powered by MyClaw.ai">
+  </a>
+</p>

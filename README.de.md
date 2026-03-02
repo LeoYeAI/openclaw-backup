@@ -4,33 +4,43 @@
 [![ClaWHub](https://img.shields.io/badge/ClaWHub-myclaw--backup-orange?style=flat-square)](https://clawhub.com/skills/myclaw-backup)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
+---
+
+## Über MyClaw.ai
+
+**[MyClaw.ai](https://myclaw.ai)** ist eine KI-Persönlichkeitsassistenz-Plattform, die jedem Nutzer einen vollständigen Server mit kompletter Codekontrolle, Netzwerkzugang und Toolzugriff bietet. Ihr KI-Agent ist kein einfacher Chatbot — er kann Code schreiben, Dateien verwalten, Skripte ausführen und sich jetzt selbst sichern und auf jede neue Instanz wiederherstellen.
+
+Dieses Skill ist Teil des offenen Skills-Ökosystems von [MyClaw.ai](https://myclaw.ai) und kann auf jeder OpenClaw-Instanz in Sekunden installiert werden.
+
+---
+
 # 🦞 OpenClaw Backup
 
-**Ein-Klick-Backup & Wiederherstellung für OpenClaw-Instanzen.**
+**Ein-Klick-Backup und -Wiederherstellung für OpenClaw-Instanzen.**
 
-Sichert alles — Arbeitsbereich, Speicher, Skills, Anmeldedaten, Bot-Token, API-Schlüssel, Agent-Sitzungsverlauf — in einem einzigen verschlüsselten Archiv. Stellen Sie auf jeder neuen OpenClaw-Instanz ohne erneutes Pairing wieder her.
+Sichert alles — Workspace, Erinnerungen, Skills, Zugangsdaten, Bot-Token, API-Schlüssel, Agent-Sitzungsverlauf — in einem einzigen Archiv. Stellen Sie auf jeder neuen OpenClaw-Instanz ohne erneutes Pairing wieder her.
 
-## ⚡ Installation in einer Zeile
+## ⚡ Installation
 
-Sagen Sie einfach Ihrem OpenClaw-Agenten:
+Sagen Sie einfach Ihrem OpenClaw-Agent:
 
-> **"Hilf mir, das Backup zu installieren"**
+> **„Hilf mir, Backup zu installieren"**
 
-Oder manuell installieren:
+Oder manuell:
 ```bash
 clawhub install myclaw-backup
 ```
 
-## Was wird gesichert
+## Was gesichert wird
 
 | Komponente | Details |
 |---|---|
-| 🧠 Arbeitsbereich | MEMORY.md, Skills, Agent-Dateien, SOUL.md, USER.md |
-| ⚙️ Konfiguration | openclaw.json (Bot-Token, API-Schlüssel, Modell-Konfiguration) |
-| 🔑 Anmeldedaten | Kanal-Pairing-Status — kein erneutes Pairing nach der Wiederherstellung |
+| 🧠 Workspace | MEMORY.md, Skills, Agent-Dateien, SOUL.md, USER.md |
+| ⚙️ Konfiguration | openclaw.json (Bot-Token, API-Schlüssel, Modellkonfiguration) |
+| 🔑 Zugangsdaten | Kanal-Pairing-Status — kein erneutes Pairing nach Wiederherstellung |
 | 📜 Sitzungen | Vollständiger Agent-Gesprächsverlauf |
 | ⏰ Cron-Jobs | Alle geplanten Aufgaben |
-| 🛡️ Skripte | Guardian, Watchdog, start-gateway |
+| 🛡️ Skripte | Guardian, Watchdog, Start-Gateway |
 
 ## Verwendung
 
@@ -39,36 +49,36 @@ clawhub install myclaw-backup
 bash scripts/backup.sh /tmp/openclaw-backups
 ```
 
-### Wiederherstellen (immer zuerst Probelauf)
+### Wiederherstellen (immer zuerst dry-run)
 ```bash
 bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz --dry-run
 bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz
 ```
 
-### Browser-Oberfläche (herunterladen / hochladen / wiederherstellen)
+### Browser-Oberfläche
 ```bash
 bash scripts/serve.sh start --token $(openssl rand -hex 16) --port 7373
 # Öffnen: http://localhost:7373/?token=IHR_TOKEN
 ```
 
-### Auf einen neuen Server migrieren
-1. Server auf der alten Maschine starten, Download-URL kopieren
-2. Auf der neuen Maschine: OpenClaw installieren → Server starten → Backup hochladen → wiederherstellen
-3. Alle Kanäle verbinden sich automatisch wieder — kein erneutes Pairing erforderlich
+### Migration auf neuen Server
+1. Server auf alter Maschine starten → Backup herunterladen
+2. Neue Maschine: OpenClaw installieren → Skill installieren → hochladen → wiederherstellen
+3. Alle Kanäle verbinden sich automatisch — kein erneutes Pairing nötig
 
 ## ⚠️ Sicherheit
 
-Dieser Skill verarbeitet **hochsensible Daten** (Bot-Token, API-Schlüssel, Anmeldedaten).
+Dieses Skill verarbeitet **hochsensible Daten** (Token, API-Schlüssel, Zugangsdaten).
 
-- Beim Starten des HTTP-Servers immer `--token` setzen
-- Backup-Archive sicher aufbewahren (chmod 600 wird automatisch angewendet)
-- Immer `--dry-run` ausführen, bevor eine Wiederherstellung angewendet wird
-- Den Backup-Server niemals ohne TLS im öffentlichen Internet zugänglich machen
-
-## ClaWHub
-
-Veröffentlicht unter: https://clawhub.com/skills/myclaw-backup
+- `--token` ist für den HTTP-Server Pflicht (startet ohne Token nicht)
+- Archive werden automatisch auf `chmod 600` gesetzt
+- Immer `--dry-run` vor einer Wiederherstellung ausführen
+- HTTP-Server nicht ohne TLS im Internet exponieren
 
 ---
 
-<p align="center">Unterstützt von <a href="https://myclaw.ai">MyClaw.ai</a></p>
+<p align="center">
+  <a href="https://myclaw.ai">
+    <img src="https://img.shields.io/badge/Powered%20by-MyClaw.ai-6366f1?style=for-the-badge" alt="Powered by MyClaw.ai">
+  </a>
+</p>

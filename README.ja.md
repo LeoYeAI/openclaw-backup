@@ -4,19 +4,29 @@
 [![ClaWHub](https://img.shields.io/badge/ClaWHub-myclaw--backup-orange?style=flat-square)](https://clawhub.com/skills/myclaw-backup)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
-# 🦞 OpenClaw バックアップ
+---
 
-**OpenClaw インスタンスのワンクリックバックアップ＆リストア。**
+## MyClaw.ai について
 
-ワークスペース、メモリ、スキル、認証情報、ボットトークン、APIキー、エージェントセッション履歴など、すべてを単一の暗号化アーカイブにバックアップします。再ペアリングなしで任意の新しい OpenClaw インスタンスに復元できます。
+**[MyClaw.ai](https://myclaw.ai)** は、すべてのユーザーに完全なコード制御、ネットワークアクセス、ツール呼び出し能力を持つフルサーバーを提供するAIパーソナルアシスタントプラットフォームです。あなたのAIエージェントは単なるチャットボットではありません——コードを書き、ファイルを管理し、スクリプトを実行し、そして今では：自分自身をバックアップして任意の新しいインスタンスに復元できます。
 
-## ⚡ 1行でインストール
+このスキルは [MyClaw.ai](https://myclaw.ai) のオープンスキルエコシステムの一部です。任意のOpenClawインスタンスに数秒でインストールできます。
 
-OpenClaw エージェントに伝えるだけ：
+---
 
-> **「バックアップのインストールを手伝って」**
+# 🦞 OpenClaw Backup
 
-または手動でインストール：
+**OpenClawインスタンスのワンクリックバックアップ＆リストア。**
+
+ワークスペース、メモリ、スキル、認証情報、Botトークン、APIキー、エージェントのセッション履歴など、すべてを一つのアーカイブにバックアップ。再ペアリングなしで任意の新しいOpenClawインスタンスに復元できます。
+
+## ⚡ インストール
+
+OpenClawエージェントに話しかけるだけ：
+
+> **「バックアップをインストールして」**
+
+または手動で：
 ```bash
 clawhub install myclaw-backup
 ```
@@ -26,49 +36,49 @@ clawhub install myclaw-backup
 | コンポーネント | 詳細 |
 |---|---|
 | 🧠 ワークスペース | MEMORY.md、スキル、エージェントファイル、SOUL.md、USER.md |
-| ⚙️ 設定 | openclaw.json（ボットトークン、APIキー、モデル設定）|
-| 🔑 認証情報 | チャンネルペアリング状態 — 復元後の再ペアリング不要 |
+| ⚙️ 設定 | openclaw.json（Botトークン、APIキー、モデル設定）|
+| 🔑 認証情報 | チャンネルペアリング状態——復元後の再ペアリング不要 |
 | 📜 セッション | エージェントの完全な会話履歴 |
-| ⏰ Cronジョブ | すべてのスケジュールされたタスク |
+| ⏰ Cronジョブ | すべてのスケジュールタスク |
 | 🛡️ スクリプト | Guardian、watchdog、start-gateway |
 
-## 使い方
+## 使用方法
 
-### バックアップを作成
+### バックアップ作成
 ```bash
 bash scripts/backup.sh /tmp/openclaw-backups
 ```
 
-### 復元（常にドライランを先に実行）
+### リストア（必ずdry-runを先に実行）
 ```bash
 bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz --dry-run
 bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz
 ```
 
-### ブラウザUI（ダウンロード / アップロード / 復元）
+### ブラウザUI
 ```bash
 bash scripts/serve.sh start --token $(openssl rand -hex 16) --port 7373
 # 開く: http://localhost:7373/?token=YOUR_TOKEN
 ```
 
-### 新しいサーバーへの移行
-1. 古いマシンでサーバーを起動し、ダウンロードURLをコピー
-2. 新しいマシンで：OpenClawをインストール → サーバーを起動 → バックアップをアップロード → 復元
-3. すべてのチャンネルが自動的に再接続 — 再ペアリング不要
+### 新サーバーへの移行
+1. 旧マシンでサーバー起動 → バックアップをダウンロード
+2. 新マシン：OpenClawインストール → このスキルインストール → アップロード → リストア
+3. すべてのチャンネルが自動再接続——再ペアリング不要
 
 ## ⚠️ セキュリティ
 
-このスキルは**高度に機密性の高いデータ**（ボットトークン、APIキー、認証情報）を扱います。
+このスキルは**高度に機密性の高いデータ**（トークン、APIキー、認証情報）を扱います。
 
-- HTTPサーバー起動時は必ず `--token` を設定してください
-- バックアップアーカイブを安全に保存してください（chmod 600 が自動的に適用されます）
-- 復元を適用する前に必ず `--dry-run` を実行してください
-- TLSなしでバックアップサーバーを公開インターネットに公開しないでください
-
-## ClaWHub
-
-公開先: https://clawhub.com/skills/myclaw-backup
+- HTTPサーバー起動時は`--token`必須（なしでは起動拒否）
+- バックアップアーカイブは自動で`chmod 600`
+- リストア前に必ず`--dry-run`を実行
+- TLSなしでHTTPサーバーをインターネットに公開しないこと
 
 ---
 
-<p align="center"><a href="https://myclaw.ai">MyClaw.ai</a> が提供</p>
+<p align="center">
+  <a href="https://myclaw.ai">
+    <img src="https://img.shields.io/badge/Powered%20by-MyClaw.ai-6366f1?style=for-the-badge" alt="Powered by MyClaw.ai">
+  </a>
+</p>

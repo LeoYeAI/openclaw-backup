@@ -4,19 +4,29 @@
 [![ClaWHub](https://img.shields.io/badge/ClaWHub-myclaw--backup-orange?style=flat-square)](https://clawhub.com/skills/myclaw-backup)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 
+---
+
+## Built on MyClaw.ai
+
+**[MyClaw.ai](https://myclaw.ai)** is an AI personal assistant platform that gives every user a full server with complete code control, networking, and tool access. Your AI agent isn't just a chatbot — it can write code, manage files, run scripts, and now: back itself up and restore to any new instance.
+
+This skill is part of the [MyClaw.ai](https://myclaw.ai) open skills ecosystem. Install it on any OpenClaw instance in seconds.
+
+---
+
 # 🦞 OpenClaw Backup
 
 **One-click backup & restore for OpenClaw instances.**
 
-Backs up everything — workspace, memory, skills, credentials, bot tokens, API keys, agent session history — into a single encrypted archive. Restore to any new OpenClaw instance with zero re-pairing.
+Backs up everything — workspace, memory, skills, credentials, bot tokens, API keys, agent session history — into a single archive. Restore to any new OpenClaw instance with zero re-pairing.
 
-## ⚡ Install in One Line
+## ⚡ Install
 
 Just tell your OpenClaw agent:
 
 > **"Help me install backup"**
 
-Or install manually:
+Or manually:
 ```bash
 clawhub install myclaw-backup
 ```
@@ -52,23 +62,27 @@ bash scripts/serve.sh start --token $(openssl rand -hex 16) --port 7373
 ```
 
 ### Migrate to a new server
-1. Start server on old machine, copy the download URL
-2. On new machine: install OpenClaw → start server → upload backup → restore
+1. Start server on old machine → download backup via browser
+2. On new machine: install OpenClaw → install this skill → upload backup → restore
 3. All channels reconnect automatically — no re-pairing needed
 
 ## ⚠️ Security
 
 This skill handles **highly sensitive data** (bot tokens, API keys, credentials).
 
-- Always set `--token` when starting the HTTP server
-- Store backup archives securely (chmod 600 applied automatically)
+- Always set `--token` when starting the HTTP server (required, server refuses to start without it)
+- Backup archives are `chmod 600` automatically
 - Always run `--dry-run` before applying a restore
 - Never expose the backup server to the public internet without TLS
 
 ## ClaWHub
 
-Published at: https://clawhub.com/skills/myclaw-backup
+Published at: [clawhub.com/skills/myclaw-backup](https://clawhub.com/skills/myclaw-backup)
 
 ---
 
-<p align="center">Powered by <a href="https://myclaw.ai">MyClaw.ai</a></p>
+<p align="center">
+  <a href="https://myclaw.ai">
+    <img src="https://img.shields.io/badge/Powered%20by-MyClaw.ai-6366f1?style=for-the-badge" alt="Powered by MyClaw.ai">
+  </a>
+</p>
