@@ -146,6 +146,26 @@ bash scripts/restore.sh openclaw-backup_TIMESTAMP.tar.gz
 }
 ```
 
+## Post-Restore: Automatic Recovery Report
+
+After `restore.sh` completes, it writes `workspace/.restore-complete.json`. On the next heartbeat/startup, the Agent should:
+
+1. Check if `workspace/.restore-complete.json` exists
+2. If yes: read it, send a restore report to the user, then **delete the file** (one-shot — never report twice)
+3. **Send the report in the user's primary language** (read from `workspace/USER.md`)
+
+### Report format (adapt language from USER.md)
+```
+✅ [Restore complete — in user's language]
+
+📦 Backup: {backup_name}
+🤖 Agent: {agent_name}
+🕐 Restored at: {restored_at}
+💾 Contents restored: workspace, config, credentials, history, cron...
+
+[Channel reconnect instructions in user's language]
+```
+
 ## Future: MyClaw Cloud Backup
 
 The HTTP API is designed to be compatible with a future MyClaw cloud backup service. When available, replace the local server URL with the MyClaw API endpoint — the upload/download/restore flow stays identical.

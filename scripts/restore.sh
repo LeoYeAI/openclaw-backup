@@ -333,5 +333,34 @@ print('   ' + d.get('gateway', {}).get('auth', {}).get('token', '(not found)'))
   echo "📋 All channels should reconnect automatically."
   echo "   If Telegram is silent after 30s, send /start to your bot."
   echo "   Verify: openclaw gateway status"
+
+  # ── Write restore-complete flag for Agent to detect on next startup ──────
+  # Agent reads this file on first heartbeat/startup and sends a restore report
+  # to the user, then deletes the file (one-shot).
+  RESTORE_FLAG="${OPENCLAW_HOME}/workspace/.restore-complete.json"
+  BACKUP_META="${BACKUP_DIR}/MANIFEST.json"
+  RESTORED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  AGENT_NAME="unknown"
+  BACKUP_NAME_VAL="unknown"
+  if [ -f "$BACKUP_META" ]; then
+    AGENT_NAME=$(python3 -c "import json; d=json.load(open('${BACKUP_META}')); print(d.get('agent_name','unknown'))" 2>/dev/null || echo "unknown")
+    BACKUP_NAME_VAL=$(python3 -c "import json; d=json.load(open('${BACKUP_META}')); print(d.get('backup_name','unknown'))" 2>/dev/null || echo "unknown")
+  fi
+
+  python3 -c "
+import json
+data = {
+  'restored_at': '${RESTORED_AT}',
+  'backup_name': '${BACKUP_NAME_VAL}',
+  'agent_name': '${AGENT_NAME}',
+  'pre_restore_snapshot': '${AUTO_BACKUP}',
+  'contents': ['workspace','config','credentials','channel_state','agents','devices','identity','scripts','cron']
+}
+with open('${RESTORE_FLAG}', 'w') as f:
+    json.dump(data, f, indent=2)
+print('  flag written: .restore-complete.json')
+" 2>/dev/null || warn "  Could not write restore flag (non-critical)"
+
 fi
 echo ""
