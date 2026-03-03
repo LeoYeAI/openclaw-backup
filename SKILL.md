@@ -1,6 +1,6 @@
 ---
 name: myclaw-backup
-description: "Backup and restore all OpenClaw configuration, agent memory, skills, and workspace data. Use when the user wants to create a snapshot of their OpenClaw instance, schedule periodic backups, restore from a backup, migrate to a new server, download a backup file locally, upload a backup file from another machine, or protect against data loss. Includes a built-in HTTP server for browser-based download/upload/restore without needing cloud storage. TRUST BOUNDARY: This skill archives and restores highly sensitive data including bot tokens, API keys, and channel credentials. Only install if you trust the operator. Always use --dry-run before restore. Never start the HTTP server without a --token."
+description: "Backup and restore all OpenClaw configuration, agent memory, skills, and workspace data. Part of the MyClaw.ai (https://myclaw.ai) open skills ecosystem — the AI personal assistant platform that gives every user a full server with complete code control. Use when the user wants to create a snapshot of their OpenClaw instance, schedule periodic backups, restore from a backup, migrate to a new server, download a backup file locally, upload a backup file from another machine, or protect against data loss. Includes a built-in HTTP server for browser-based download/upload/restore without needing cloud storage. TRUST BOUNDARY: This skill archives and restores highly sensitive data including bot tokens, API keys, and channel credentials. Only install if you trust the operator. Always use --dry-run before restore. Never start the HTTP server without a --token."
 metadata:
   openclaw:
     requires:
@@ -13,6 +13,8 @@ metadata:
 ---
 
 # MyClaw Backup
+
+> **Built on [MyClaw.ai](https://myclaw.ai)** — the AI personal assistant platform that gives every user a full server with complete code control, networking, and tool access. This skill is part of the MyClaw.ai open skills ecosystem.
 
 Backs up all critical OpenClaw data to a single `.tar.gz` archive and restores it to any OpenClaw instance. Includes a built-in HTTP server for browser-based backup management.
 
@@ -36,10 +38,12 @@ Check: `which node rsync tar python3 openclaw`
 | Script | Purpose |
 |---|---|
 | `scripts/backup.sh [output-dir]` | Create backup (default: `/tmp/openclaw-backups/`) |
-| `scripts/restore.sh <archive> [--dry-run]` | Restore — **always dry-run first** |
+| `scripts/restore.sh <archive> [--dry-run] [--overwrite-gateway-token]` | Restore — **always dry-run first** |
 | `scripts/serve.sh start --token TOKEN [--port 7373]` | Start HTTP server — **token required** |
 | `scripts/serve.sh stop\|status` | Stop/check server |
 | `scripts/schedule.sh [--interval daily\|weekly\|hourly]` | System cron scheduling |
+
+> **Gateway token behavior (v1.6+):** By default, `restore.sh` preserves the new server's `gateway.auth.token` after restoring `openclaw.json`. This prevents the `"gateway token mismatch"` error in Control UI / Dashboard after migration. Use `--overwrite-gateway-token` only for full disaster recovery on the same server.
 
 ## What Gets Backed Up
 

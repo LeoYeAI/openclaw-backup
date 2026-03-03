@@ -1,14 +1,25 @@
 #!/usr/bin/env bash
 # openclaw-restore: Restore OpenClaw from a backup archive
-# Usage: restore.sh <backup.tar.gz> [--dry-run]
+# Usage: restore.sh <backup.tar.gz> [--dry-run] [--overwrite-gateway-token]
 #
 # ⚠️  WARNING: This will overwrite existing files. Run with --dry-run first.
+#
+# By default, the gateway auth token from the NEW server is preserved after restore.
+# This prevents "gateway token mismatch" errors in Control UI / Dashboard.
+# Use --overwrite-gateway-token to override this behavior (e.g. full disaster recovery).
 
 set -euo pipefail
 
 ARCHIVE="${1:-}"
 DRY_RUN=false
-[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=true
+OVERWRITE_GATEWAY_TOKEN=false
+
+for arg in "${@:2}"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    --overwrite-gateway-token) OVERWRITE_GATEWAY_TOKEN=true ;;
+  esac
+done
 
 OPENCLAW_HOME="${HOME}/.openclaw"
 
@@ -20,7 +31,7 @@ error() { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 dryrun(){ echo -e "${CYAN}[DRY]${NC} Would: $*"; }
 
 # ── Validate ─────────────────────────────────────────────────────────────────
-[ -z "$ARCHIVE" ] && error "Usage: restore.sh <backup.tar.gz> [--dry-run]"
+[ -z "$ARCHIVE" ] && error "Usage: restore.sh <backup.tar.gz> [--dry-run] [--overwrite-gateway-token]"
 [ ! -f "$ARCHIVE" ] && error "Archive not found: $ARCHIVE"
 
 echo ""
@@ -59,12 +70,45 @@ print(f\"  Credentials : {'included ✓' if has_creds else 'NOT included (old ba
   echo ""
 fi
 
+# ── Read current gateway token BEFORE any restore ────────────────────────────
+# This token belongs to THIS server — preserve it unless --overwrite-gateway-token
+CURRENT_GATEWAY_TOKEN=""
+CURRENT_CONFIG="${OPENCLAW_HOME}/openclaw.json"
+if [ -f "$CURRENT_CONFIG" ]; then
+  CURRENT_GATEWAY_TOKEN=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('${CURRENT_CONFIG}'))
+    print(d.get('gateway', {}).get('auth', {}).get('token', ''))
+except Exception:
+    print('')
+" 2>/dev/null || true)
+fi
+
+# Show token preservation strategy
+echo "🔑 Gateway Token Strategy:"
+if $OVERWRITE_GATEWAY_TOKEN; then
+  warn "  --overwrite-gateway-token set: backup token will replace current token"
+  warn "  You may need to update Control UI / Dashboard with the restored token"
+else
+  if [ -n "$CURRENT_GATEWAY_TOKEN" ]; then
+    info "  Current server token preserved (prevents Dashboard token mismatch)"
+    echo "       Token: ${CURRENT_GATEWAY_TOKEN:0:8}...${CURRENT_GATEWAY_TOKEN: -4}"
+  else
+    warn "  No current token found — backup token will be used as-is"
+  fi
+fi
+echo ""
+
 # ── Explicit confirmation before destructive restore ─────────────────────────
 if ! $DRY_RUN; then
   echo ""
   echo -e "${RED}⚠️  WARNING: This will OVERWRITE ~/.openclaw/ with backup data.${NC}"
   echo "   Backup: $(basename $ARCHIVE)"
   echo "   Target: ${OPENCLAW_HOME}"
+  if [ -n "$CURRENT_GATEWAY_TOKEN" ] && ! $OVERWRITE_GATEWAY_TOKEN; then
+    echo -e "   ${GREEN}Gateway token: preserved (this server's token kept)${NC}"
+  fi
   echo ""
   echo -n "   Type 'yes' to confirm: "
   read -r CONFIRM
@@ -110,12 +154,40 @@ fi
 
 # ── 2. Gateway config ─────────────────────────────────────────────────────────
 if [ -f "${BACKUP_DIR}/config/openclaw.json" ]; then
-  info "Restoring Gateway config (incl. bot tokens & API keys)..."
+  info "Restoring Gateway config (bot tokens, API keys, channels)..."
   if $DRY_RUN; then
     dryrun "cp openclaw.json → ${OPENCLAW_HOME}/openclaw.json"
+    if [ -n "$CURRENT_GATEWAY_TOKEN" ] && ! $OVERWRITE_GATEWAY_TOKEN; then
+      echo -e "  ${CYAN}[DRY]${NC} gateway.auth.token will be preserved (not overwritten from backup)"
+    fi
   else
     cp "${BACKUP_DIR}/config/openclaw.json" "${OPENCLAW_HOME}/openclaw.json"
-    info "  openclaw.json restored"
+
+    # ── KEY FIX: Preserve this server's gateway token ──────────────────────
+    # The backup's gateway token belongs to the OLD server.
+    # Overwriting it causes "gateway token mismatch" in Control UI / Dashboard.
+    # We write back the token we saved before restore began.
+    if [ -n "$CURRENT_GATEWAY_TOKEN" ] && ! $OVERWRITE_GATEWAY_TOKEN; then
+      python3 -c "
+import json, sys
+path = '${OPENCLAW_HOME}/openclaw.json'
+token = '${CURRENT_GATEWAY_TOKEN}'
+d = json.load(open(path))
+if 'gateway' not in d:
+    d['gateway'] = {}
+if 'auth' not in d['gateway']:
+    d['gateway']['auth'] = {}
+d['gateway']['auth']['token'] = token
+json.dump(d, open(path, 'w'), indent=2)
+print('  gateway token restored to current server value')
+"
+      info "  openclaw.json restored (gateway token preserved: ${CURRENT_GATEWAY_TOKEN:0:8}...)"
+    else
+      info "  openclaw.json restored (gateway token from backup used)"
+    fi
+
+    [ -f "${BACKUP_DIR}/config/openclaw.json.bak" ] && \
+      cp "${BACKUP_DIR}/config/openclaw.json.bak" "${OPENCLAW_HOME}/openclaw.json.bak"
   fi
 fi
 
@@ -132,7 +204,6 @@ if [ -d "${BACKUP_DIR}/skills/system" ] && [ -n "$(ls -A ${BACKUP_DIR}/skills/sy
 fi
 
 # ── 4. Credentials & channel pairing state ───────────────────────────────────
-# Restoring these means no re-pairing needed after migration
 if [ -d "${BACKUP_DIR}/credentials" ] && [ -n "$(ls -A ${BACKUP_DIR}/credentials 2>/dev/null)" ]; then
   info "Restoring credentials (channel pairing state)..."
   if $DRY_RUN; then
@@ -141,14 +212,13 @@ if [ -d "${BACKUP_DIR}/credentials" ] && [ -n "$(ls -A ${BACKUP_DIR}/credentials
   else
     mkdir -p "${OPENCLAW_HOME}/credentials"
     rsync -a "${BACKUP_DIR}/credentials/" "${OPENCLAW_HOME}/credentials/"
-    # Ensure restrictive permissions on restored credentials
     chmod 700 "${OPENCLAW_HOME}/credentials"
     chmod 600 "${OPENCLAW_HOME}/credentials/"* 2>/dev/null || true
     info "  credentials restored (permissions hardened)"
   fi
 fi
 
-# Channel runtime state (update offsets, session data)
+# Channel runtime state
 if [ -d "${BACKUP_DIR}/channels" ]; then
   info "Restoring channel state..."
   for channel_dir in "${BACKUP_DIR}/channels/"*/; do
@@ -200,7 +270,7 @@ if [ -d "${BACKUP_DIR}/identity" ] && [ -n "$(ls -A ${BACKUP_DIR}/identity 2>/de
   fi
 fi
 
-# ── 9. Scripts (guardian, watchdog, start-gateway) ───────────────────────────
+# ── 8. Scripts (guardian, watchdog, start-gateway) ───────────────────────────
 if [ -d "${BACKUP_DIR}/scripts" ] && [ -n "$(ls -A ${BACKUP_DIR}/scripts 2>/dev/null)" ]; then
   info "Restoring scripts..."
   if $DRY_RUN; then
@@ -215,7 +285,7 @@ if [ -d "${BACKUP_DIR}/scripts" ] && [ -n "$(ls -A ${BACKUP_DIR}/scripts 2>/dev/
   fi
 fi
 
-# ── 10. Cron ──────────────────────────────────────────────────────────────────
+# ── 9. Cron ──────────────────────────────────────────────────────────────────
 if [ -d "${BACKUP_DIR}/cron" ] && [ -n "$(ls -A ${BACKUP_DIR}/cron 2>/dev/null)" ]; then
   info "Restoring cron jobs..."
   if $DRY_RUN; then
@@ -246,6 +316,19 @@ if $DRY_RUN; then
   echo "✅ Dry run complete. Run without --dry-run to apply."
 else
   echo "✅ Restore complete!"
+  echo ""
+  if [ -n "$CURRENT_GATEWAY_TOKEN" ] && ! $OVERWRITE_GATEWAY_TOKEN; then
+    echo "🔑 Gateway token: preserved (this server's token kept)"
+    echo "   Control UI / Dashboard should connect without any changes."
+  else
+    echo "🔑 Gateway token: restored from backup"
+    echo "   ⚠️  If Control UI shows 'token mismatch', copy this token into Dashboard settings:"
+    python3 -c "
+import json
+d = json.load(open('${OPENCLAW_HOME}/openclaw.json'))
+print('   ' + d.get('gateway', {}).get('auth', {}).get('token', '(not found)'))
+" 2>/dev/null || true
+  fi
   echo ""
   echo "📋 All channels should reconnect automatically."
   echo "   If Telegram is silent after 30s, send /start to your bot."

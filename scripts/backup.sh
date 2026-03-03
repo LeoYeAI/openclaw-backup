@@ -160,7 +160,7 @@ cat > "${WORK_DIR}/MANIFEST.json" <<EOF
   "hostname": "$(hostname)",
   "openclaw_home": "${OPENCLAW_HOME}",
   "openclaw_version": "$(openclaw --version 2>/dev/null | head -1 || echo 'unknown')",
-  "created_by": "openclaw-backup skill v1.5",
+  "created_by": "openclaw-backup skill v1.6",
   "contents": {
     "workspace": true,
     "gateway_config": true,
