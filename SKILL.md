@@ -18,14 +18,31 @@ metadata:
 
 Backs up all critical OpenClaw data to a single `.tar.gz` archive and restores it to any OpenClaw instance. Includes a built-in HTTP server for browser-based backup management.
 
-## ⚠️ Trust Boundary
+## ⚠️ Trust Boundary & Security Model
 
-This skill handles **highly sensitive data**: bot tokens, API keys, channel credentials, session history. Understand what it does before use:
+This skill handles **highly sensitive data**: bot tokens, API keys, channel credentials, session history. Understand the security model before use:
 
-- **backup.sh** reads and archives the entire `~/.openclaw/` directory (excluding logs/media)
-- **restore.sh** overwrites `~/.openclaw/` — always run `--dry-run` first, confirm output, then apply
-- **serve.sh** opens a TCP port — **always set `--token`**, never expose to public internet without it
-- Backup archives are `chmod 600`; treat them like passwords
+### What each script does
+- **backup.sh** — reads `~/.openclaw/` and writes a `chmod 600` archive to disk. No network access.
+- **restore.sh** — overwrites `~/.openclaw/` from an archive. Requires typing `yes` to confirm. Always run `--dry-run` first.
+- **serve.sh / server.js** — starts a local HTTP server. Token is **mandatory** (refuses to start without one). Shell-execution endpoints (`/backup`, `/restore`) are **localhost-only** — remote access can only download and upload files, not trigger execution.
+- **schedule.sh** — modifies your system crontab to run backup.sh on a schedule. Prints the cron entry before adding. Use `--disable` to remove.
+
+### Access control summary
+| Endpoint | Remote (token required) | Localhost only |
+|---|---|---|
+| GET /health | ✅ (no token) | — |
+| GET /backups | ✅ | — |
+| GET /download/:file | ✅ | — |
+| POST /upload | ✅ | — |
+| POST /backup | ❌ | ✅ |
+| POST /restore | ❌ | ✅ |
+
+### Best practices
+- Never start the HTTP server without `--token`
+- Never expose the HTTP server to the public internet without TLS
+- Always run `restore.sh --dry-run` before applying a restore
+- Store backup archives securely — they contain all credentials
 
 ## Dependencies
 

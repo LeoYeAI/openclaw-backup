@@ -180,8 +180,14 @@ function serveUI(req, res) {
 <h1>🦞 OpenClaw Backup</h1>
 <p class="sub">Backup manager — download, upload and restore your OpenClaw instance</p>
 
+<!-- Remote access notice (shown only when accessed remotely) -->
+<div id="remote-notice" class="status" style="display:none;background:#1e3a5f;color:#93c5fd;margin-bottom:1rem;">
+  🔒 <strong>Remote access mode</strong> — Create backup and Restore are disabled remotely for security.<br>
+  Download backups here, then run <code>restore.sh &lt;archive&gt;</code> locally on the target machine.
+</div>
+
 <!-- Create Backup -->
-<div class="card">
+<div class="card" id="create-card">
   <h2>Create Backup</h2>
   <div class="actions">
     <button class="btn btn-primary" onclick="createBackup()">⚡ Create Backup Now</button>
@@ -227,6 +233,15 @@ function serveUI(req, res) {
 <script>
 const token = '${TOKEN}';
 const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+
+// Detect if accessed remotely — hide destructive actions
+const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
+if (!isLocalhost) {
+  document.getElementById('remote-notice').style.display = 'block';
+  document.getElementById('create-card').style.display = 'none';
+  // Hide restore buttons (rendered server-side) after DOM loads
+  document.querySelectorAll('.btn-danger').forEach(b => b.style.display = 'none');
+}
 
 async function createBackup() {
   const el = document.getElementById('create-status');
@@ -321,8 +336,16 @@ const server = http.createServer((req, res) => {
     return json(res, 200, { backups: listBackups() });
   }
 
-  // POST /backup — create new backup
+  // POST /backup — create new backup (localhost-only: triggers shell execution)
   if (req.method === 'POST' && urlPath === '/backup') {
+    const remoteIp = req.socket.remoteAddress || '';
+    const isLocalhost = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
+    if (!isLocalhost) {
+      return json(res, 403, {
+        error: 'Creating backups via HTTP is only allowed from localhost.',
+        reason: 'Shell execution endpoints are restricted to 127.0.0.1 to prevent remote code execution risk.'
+      });
+    }
     try {
       execSync(`chmod +x "${BACKUP_SCRIPT}"`, { stdio: 'ignore' });
       const output = execSync(`bash "${BACKUP_SCRIPT}" "${BACKUP_DIR}"`, {
@@ -381,8 +404,21 @@ const server = http.createServer((req, res) => {
   }
 
   // POST /restore/:filename[?dry_run=1&confirm=1]
-  // Non-dry-run restore requires ?confirm=1 to prevent accidental overwrites
+  // ── SECURITY: restore is localhost-only ──────────────────────────────────
+  // Even with a valid token, restore (which overwrites ~/.openclaw) is only
+  // allowed from 127.0.0.1 / ::1. Remote access can download and upload, but
+  // cannot trigger a restore. This limits blast radius if the token leaks.
   if (req.method === 'POST' && urlPath.startsWith('/restore/')) {
+    const remoteIp = req.socket.remoteAddress || '';
+    const isLocalhost = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
+    if (!isLocalhost) {
+      return json(res, 403, {
+        error: 'Restore is only allowed from localhost.',
+        reason: 'For security, the /restore endpoint is restricted to 127.0.0.1. Download the backup file and run restore.sh locally instead.',
+        hint: 'bash scripts/restore.sh <archive.tar.gz> --dry-run'
+      });
+    }
+
     const filename = path.basename(decodeURIComponent(urlPath.slice('/restore/'.length)));
     const filePath = path.join(BACKUP_DIR, filename);
     const params = new URL('http://x' + req.url).searchParams;

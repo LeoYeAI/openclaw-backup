@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # openclaw-backup-schedule: Set up a cron job for periodic automatic backups
+#
+# ⚠️  PERSISTENCE NOTICE: This script modifies your system crontab (crontab -e).
+# It adds one entry to run backup.sh on a schedule. Use --disable to remove it.
+#
 # Usage: schedule.sh [--interval <daily|weekly|hourly>] [--output-dir <dir>] [--disable]
 
 set -euo pipefail
@@ -42,9 +46,13 @@ esac
 # Ensure backup script is executable
 chmod +x "$BACKUP_SCRIPT"
 
-# Add to crontab
+# Add to crontab — notify user explicitly
 EXISTING=$(crontab -l 2>/dev/null | grep -v "openclaw-backup" || true)
 NEW_CRON="${CRON_EXPR} ${BACKUP_SCRIPT} ${OUTPUT_DIR} >> /tmp/openclaw-backup.log 2>&1 # openclaw-backup"
+
+warn "This will add the following entry to your crontab:"
+echo "    ${NEW_CRON}"
+echo ""
 
 {
   echo "$EXISTING"
