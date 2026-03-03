@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🦞 MyClaw Backup</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
+  h1 { font-size: 1.6rem; margin-bottom: 0.3rem; }
+  .sub { color: #64748b; font-size: 0.85rem; margin-bottom: 2rem; }
+  .card { background: #1e2130; border: 1px solid #2d3148; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+  h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .btn { display: inline-block; padding: 0.5rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; font-size: 0.9rem; font-weight: 500; transition: opacity 0.15s; text-decoration: none; }
+  .btn:hover { opacity: 0.85; }
+  .btn-primary { background: #6366f1; color: white; }
+  .btn-success { background: #22c55e; color: white; }
+  .btn-danger  { background: #ef4444; color: white; }
+  .btn-gray    { background: #334155; color: #e2e8f0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { text-align: left; padding: 0.5rem 0.75rem; color: #64748b; border-bottom: 1px solid #2d3148; }
+  td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1a1f2e; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #252a3d; }
+  .tag { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; background: #1e3a5f; color: #60a5fa; }
+  .empty { color: #475569; text-align: center; padding: 2rem; }
+  .upload-zone { border: 2px dashed #334155; border-radius: 8px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color 0.2s; }
+  .upload-zone:hover, .upload-zone.drag { border-color: #6366f1; }
+  .upload-zone input { display: none; }
+  .upload-zone p { color: #64748b; margin-top: 0.5rem; font-size: 0.85rem; }
+  .status { padding: 0.75rem 1rem; border-radius: 8px; margin-top: 1rem; font-size: 0.88rem; }
+  .status.ok  { background: #14532d; color: #86efac; }
+  .status.err { background: #7f1d1d; color: #fca5a5; }
+  .status.info { background: #1e3a5f; color: #93c5fd; }
+  .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  #remote-notice { display: none; }
+</style>
+</head>
+<body>
+<h1>🦞 MyClaw Backup</h1>
+<p class="sub">Backup manager — <a href="https://myclaw.ai" style="color:#6366f1">MyClaw.ai</a></p>
+
+<div id="remote-notice" class="status info" style="margin-bottom:1.5rem">
+  🔒 <strong>Remote access — read-only mode.</strong> Create backup and Restore are disabled for security (localhost-only).
+  Download your backup below, then run <code>restore.sh &lt;archive&gt;</code> locally.
+</div>
+
+<div class="card" id="create-card">
+  <h2>Create Backup</h2>
+  <div class="actions">
+    <button class="btn btn-primary" onclick="createBackup()">⚡ Create Backup Now</button>
+  </div>
+  <div id="create-status" class="status" style="display:none"></div>
+</div>
+
+<div class="card">
+  <h2>Upload Backup</h2>
+  <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()"
+    ondragover="event.preventDefault();this.classList.add('drag')"
+    ondragleave="this.classList.remove('drag')"
+    ondrop="handleDrop(event)">
+    <div style="font-size:2rem">📦</div>
+    <strong>Click to select</strong> or drag & drop
+    <p>openclaw-backup_*.tar.gz</p>
+    <input type="file" id="file-input" accept=".tar.gz,.gz" onchange="uploadFile(this.files[0])">
+  </div>
+  <div id="upload-status" class="status" style="display:none"></div>
+</div>
+
+<div class="card">
+  <h2>Available Backups ({{BACKUP_COUNT}})</h2>
+  <table>
+    <tr><th>Filename</th><th>Size</th><th>Created</th><th>Actions</th></tr>
+    {{BACKUP_ROWS}}
+  </table>
+</div>
+
+<script>
+const TOKEN = '{{TOKEN}}';
+const headers = { 'Authorization': 'Bearer ' + TOKEN };
+const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+
+if (!isLocal) {
+  document.getElementById('remote-notice').style.display = 'block';
+  document.getElementById('create-card').style.display = 'none';
+  document.querySelectorAll('.btn-danger, .btn-success').forEach(b => b.style.display = 'none');
+}
+
+function status(id, cls, msg) {
+  const el = document.getElementById(id);
+  el.className = 'status ' + cls;
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function createBackup() {
+  status('create-status', 'ok', '⏳ Creating backup...');
+  try {
+    const r = await fetch('/backup', { method: 'POST', headers });
+    const d = await r.json();
+    if (r.ok) { status('create-status', 'ok', '✅ ' + d.filename + ' (' + d.size + ')'); setTimeout(() => location.reload(), 1500); }
+    else status('create-status', 'err', '❌ ' + (d.error || 'Failed'));
+  } catch(e) { status('create-status', 'err', '❌ ' + e.message); }
+}
+
+async function uploadFile(file) {
+  if (!file) return;
+  status('upload-status', 'ok', '⏳ Uploading ' + file.name + '...');
+  const fd = new FormData(); fd.append('backup', file);
+  try {
+    const r = await fetch('/upload', { method: 'POST', headers, body: fd });
+    const d = await r.json();
+    if (r.ok) { status('upload-status', 'ok', '✅ Uploaded: ' + d.filename); setTimeout(() => location.reload(), 1000); }
+    else status('upload-status', 'err', '❌ ' + (d.error || 'Failed'));
+  } catch(e) { status('upload-status', 'err', '❌ ' + e.message); }
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag');
+  const f = e.dataTransfer.files[0];
+  if (f) uploadFile(f);
+}
+
+document.querySelectorAll('.restore-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const file = btn.dataset.file;
+    const confirm_ = btn.dataset.confirm === '1';
+    if (confirm_) {
+      if (prompt('Type YES to confirm restore of: ' + file) !== 'YES') return;
+    }
+    status('create-status', 'ok', '⏳ ' + (confirm_ ? 'Restoring' : 'Dry run') + '...');
+    const params = new URLSearchParams({ token: TOKEN });
+    if (!confirm_) params.set('dry_run', '1'); else params.set('confirm', '1');
+    try {
+      const r = await fetch('/restore/' + encodeURIComponent(file) + '?' + params, { method: 'POST', headers });
+      const d = await r.json();
+      const el = document.getElementById('create-status');
+      el.className = 'status ok';
+      el.textContent = '✅ ' + (d.message || 'Done');
+      if (d.output) {
+        const pre = document.createElement('pre');
+        pre.style = 'margin-top:.75rem;font-size:.75rem;color:#94a3b8;white-space:pre-wrap;max-height:300px;overflow-y:auto';
+        pre.textContent = d.output;
+        el.appendChild(pre);
+      }
+    } catch(e) { status('create-status', 'err', '❌ ' + e.message); }
+  });
+});
+</script>
+</body>
+</html>

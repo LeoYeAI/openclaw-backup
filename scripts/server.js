@@ -1,369 +1,163 @@
 #!/usr/bin/env node
 /**
- * openclaw-backup-server: Lightweight HTTP server for backup download/upload/restore
+ * MyClaw Backup Server — lightweight HTTP server for backup management
+ * Part of MyClaw.ai (https://myclaw.ai) open skills ecosystem
  *
- * Usage: node server.js [--port 7373] [--backup-dir /tmp/openclaw-backups] [--token mytoken]
+ * SECURITY MODEL (enforced in code, not just docs):
+ *   - Token is REQUIRED to start (process.exit if missing)
+ *   - POST /backup and POST /restore are LOCALHOST-ONLY (127.0.0.1 / ::1)
+ *   - Remote clients can only: list, download, upload
+ *   - /health is unauthenticated and returns no sensitive info
  *
- * Endpoints:
- *   GET  /                     → Web UI (browser-friendly)
- *   GET  /backups              → List available backups (JSON)
- *   POST /backup               → Trigger a new backup, returns download link
- *   GET  /download/:filename   → Download a backup file
- *   POST /upload               → Upload a backup file (multipart/form-data, field: "backup")
- *   POST /restore/:filename    → Restore from an uploaded backup (dry-run=1 for preview)
- *   GET  /health               → Health check
- *
- * Auth: pass ?token=xxx or header Authorization: Bearer xxx
+ * Usage: node server.js --token <secret> [--port 7373] [--backup-dir /tmp/openclaw-backups]
  */
 
+'use strict';
 const http = require('http');
-const https = require('https');
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
-const { execSync, spawn } = require('child_process');
-const os = require('os');
+const { execSync } = require('child_process');
 
-// ── Config ───────────────────────────────────────────────────────────────────
-const args = process.argv.slice(2);
-const getArg = (flag, def) => {
-  const i = args.indexOf(flag);
-  return i !== -1 && args[i + 1] ? args[i + 1] : def;
-};
+// ── Config ────────────────────────────────────────────────────────────────────
+const argv = process.argv.slice(2);
+const arg  = (flag, def) => { const i = argv.indexOf(flag); return i !== -1 && argv[i+1] ? argv[i+1] : def; };
 
-const PORT = parseInt(getArg('--port', process.env.BACKUP_PORT || '7373'));
-const BACKUP_DIR = getArg('--backup-dir', process.env.BACKUP_DIR || '/tmp/openclaw-backups');
-const TOKEN = getArg('--token', process.env.BACKUP_TOKEN || '');
-const SKILL_DIR = path.resolve(__dirname, '..');
-const BACKUP_SCRIPT = path.join(SKILL_DIR, 'scripts', 'backup.sh');
-const RESTORE_SCRIPT = path.join(SKILL_DIR, 'scripts', 'restore.sh');
+const PORT       = parseInt(arg('--port',       process.env.BACKUP_PORT  || '7373'));
+const BACKUP_DIR = arg('--backup-dir', process.env.BACKUP_DIR  || '/tmp/openclaw-backups');
+const TOKEN      = arg('--token',      process.env.BACKUP_TOKEN || '');
+const SKILL_DIR  = path.resolve(__dirname, '..');
+const BACKUP_SH  = path.join(SKILL_DIR, 'scripts', 'backup.sh');
+const RESTORE_SH = path.join(SKILL_DIR, 'scripts', 'restore.sh');
 
-// ── Token enforcement ─────────────────────────────────────────────────────────
-// Token is required — this server handles highly sensitive data (credentials, API keys).
-// Refusing to start without a token prevents accidental open exposure.
+// ── SECURITY GATE 1: Token required ──────────────────────────────────────────
+// This check runs before anything else. No token = no server.
 if (!TOKEN) {
-  console.error('');
-  console.error('❌ ERROR: --token is required.');
-  console.error('');
-  console.error('   This server handles sensitive data (bot tokens, API keys, credentials).');
-  console.error('   You must set a token to protect access.');
-  console.error('');
-  console.error('   Example:');
-  console.error('     node server.js --token $(openssl rand -hex 16)');
-  console.error('');
+  console.error('\n❌  --token is required. This server handles credentials and API keys.');
+  console.error('    Example: node server.js --token $(openssl rand -hex 16)\n');
   process.exit(1);
 }
 
-// Ensure backup dir exists
+// ── SECURITY GATE 2: Localhost-only check (reusable) ─────────────────────────
+// Used by /backup and /restore to block remote shell execution.
+function isLocalhost(req) {
+  const ip = req.socket.remoteAddress || '';
+  return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+}
+
+// ── Ensure backup dir exists ──────────────────────────────────────────────────
 fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-// ── Auth ─────────────────────────────────────────────────────────────────────
-function checkAuth(req) {
-  // Token is always required (enforced at startup above)
-  const fromQuery = new URL('http://x' + req.url).searchParams.get('token');
-  const fromHeader = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
-  return fromQuery === TOKEN || fromHeader === TOKEN;
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-function listBackups() {
-  try {
-    return fs.readdirSync(BACKUP_DIR)
-      .filter(f => f.startsWith('openclaw-backup_') && f.endsWith('.tar.gz'))
-      .map(f => {
-        const stat = fs.statSync(path.join(BACKUP_DIR, f));
-        return {
-          filename: f,
-          size: stat.size,
-          sizeHuman: formatBytes(stat.size),
-          createdAt: stat.mtime.toISOString(),
-          downloadUrl: `/download/${f}${TOKEN ? '?token=' + TOKEN : ''}`
-        };
-      })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  } catch { return []; }
-}
-
-function formatBytes(bytes) {
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
-}
-
-// ── Security headers helper ───────────────────────────────────────────────────
-function secureHeaders() {
-  return {
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'Cache-Control': 'no-store'
-  };
-}
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const SECURE_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Cache-Control': 'no-store'
+};
 
 function json(res, status, data) {
-  res.writeHead(status, { 'Content-Type': 'application/json', ...secureHeaders() });
+  res.writeHead(status, { 'Content-Type': 'application/json', ...SECURE_HEADERS });
   res.end(JSON.stringify(data, null, 2));
 }
 
-function parseUrlPath(url) {
-  return new URL('http://x' + url).pathname;
+function fmt(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes/1024).toFixed(1) + ' KB';
+  return (bytes/1048576).toFixed(1) + ' MB';
+}
+
+function listBackups() {
+  return fs.readdirSync(BACKUP_DIR)
+    .filter(f => f.startsWith('openclaw-backup_') && f.endsWith('.tar.gz'))
+    .map(f => {
+      const stat = fs.statSync(path.join(BACKUP_DIR, f));
+      return { filename: f, size: stat.size, sizeHuman: fmt(stat.size), createdAt: stat.mtime.toISOString(),
+               downloadUrl: `/download/${f}?token=${TOKEN}` };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function checkAuth(req) {
+  const q = new URL('http://x' + req.url).searchParams.get('token');
+  const h = (req.headers['authorization'] || '').replace('Bearer ', '').trim();
+  return q === TOKEN || h === TOKEN;
 }
 
 // ── Multipart parser (no deps) ────────────────────────────────────────────────
-function parseMultipart(req, callback) {
-  const contentType = req.headers['content-type'] || '';
-  const boundaryMatch = contentType.match(/boundary=(.+)$/);
-  if (!boundaryMatch) return callback(new Error('No boundary in multipart'));
-  const boundary = Buffer.from('--' + boundaryMatch[1]);
-
+function parseMultipart(req, cb) {
+  const ct = req.headers['content-type'] || '';
+  const bm = ct.match(/boundary=(.+)$/);
+  if (!bm) return cb(new Error('No boundary'));
   const chunks = [];
-  req.on('data', chunk => chunks.push(chunk));
+  req.on('data', c => chunks.push(c));
   req.on('end', () => {
     const body = Buffer.concat(chunks);
-    // Find filename
     const headerEnd = body.indexOf('\r\n\r\n');
     const headerStr = body.slice(0, headerEnd).toString();
-    const fnMatch = headerStr.match(/filename="([^"]+)"/);
-    if (!fnMatch) return callback(new Error('No filename in upload'));
-    const filename = path.basename(fnMatch[1]);
-
-    // Extract file content between boundary markers
+    const fnm = headerStr.match(/filename="([^"]+)"/);
+    if (!fnm) return cb(new Error('No filename'));
+    const filename = path.basename(fnm[1]);
     const start = headerEnd + 4;
-    const endBoundary = Buffer.from('\r\n--' + boundaryMatch[1]);
+    const endBoundary = Buffer.from('\r\n--' + bm[1]);
     const end = body.indexOf(endBoundary, start);
-    const fileData = end > 0 ? body.slice(start, end) : body.slice(start);
-
-    callback(null, { filename, data: fileData });
+    cb(null, { filename, data: end > 0 ? body.slice(start, end) : body.slice(start) });
   });
-  req.on('error', callback);
+  req.on('error', cb);
 }
 
 // ── Web UI ────────────────────────────────────────────────────────────────────
 function serveUI(req, res) {
+  const uiPath = path.join(SKILL_DIR, 'scripts', 'ui.html');
+  let html = fs.existsSync(uiPath) ? fs.readFileSync(uiPath, 'utf8') : '<h1>UI not found</h1>';
   const backups = listBackups();
-  const tokenParam = TOKEN ? `?token=${TOKEN}` : '';
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>🦞 OpenClaw Backup</title>
-<style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; padding: 2rem; }
-  h1 { font-size: 1.6rem; margin-bottom: 0.3rem; }
-  .sub { color: #64748b; font-size: 0.85rem; margin-bottom: 2rem; }
-  .card { background: #1e2130; border: 1px solid #2d3148; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
-  h2 { font-size: 1rem; color: #94a3b8; margin-bottom: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
-  .btn { display: inline-block; padding: 0.5rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; font-size: 0.9rem; font-weight: 500; transition: opacity 0.15s; text-decoration: none; }
-  .btn:hover { opacity: 0.85; }
-  .btn-primary { background: #6366f1; color: white; }
-  .btn-success { background: #22c55e; color: white; }
-  .btn-danger  { background: #ef4444; color: white; }
-  .btn-gray    { background: #334155; color: #e2e8f0; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-  th { text-align: left; padding: 0.5rem 0.75rem; color: #64748b; border-bottom: 1px solid #2d3148; }
-  td { padding: 0.6rem 0.75rem; border-bottom: 1px solid #1a1f2e; }
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: #252a3d; }
-  .tag { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.75rem; background: #1e3a5f; color: #60a5fa; }
-  .empty { color: #475569; text-align: center; padding: 2rem; }
-  .upload-zone { border: 2px dashed #334155; border-radius: 8px; padding: 2rem; text-align: center; cursor: pointer; transition: border-color 0.2s; }
-  .upload-zone:hover, .upload-zone.drag { border-color: #6366f1; }
-  .upload-zone input { display: none; }
-  .upload-zone p { color: #64748b; margin-top: 0.5rem; font-size: 0.85rem; }
-  .status { padding: 0.75rem 1rem; border-radius: 8px; margin-top: 1rem; font-size: 0.88rem; display: none; }
-  .status.ok  { background: #14532d; color: #86efac; display: block; }
-  .status.err { background: #7f1d1d; color: #fca5a5; display: block; }
-  .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-</style>
-</head>
-<body>
-<h1>🦞 OpenClaw Backup</h1>
-<p class="sub">Backup manager — download, upload and restore your OpenClaw instance</p>
-
-<!-- Remote access notice (shown only when accessed remotely) -->
-<div id="remote-notice" class="status" style="display:none;background:#1e3a5f;color:#93c5fd;margin-bottom:1rem;">
-  🔒 <strong>Remote access mode</strong> — Create backup and Restore are disabled remotely for security.<br>
-  Download backups here, then run <code>restore.sh &lt;archive&gt;</code> locally on the target machine.
-</div>
-
-<!-- Create Backup -->
-<div class="card" id="create-card">
-  <h2>Create Backup</h2>
-  <div class="actions">
-    <button class="btn btn-primary" onclick="createBackup()">⚡ Create Backup Now</button>
-  </div>
-  <div id="create-status" class="status"></div>
-</div>
-
-<!-- Upload Backup -->
-<div class="card">
-  <h2>Upload Backup</h2>
-  <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()"
-    ondragover="event.preventDefault();this.classList.add('drag')"
-    ondragleave="this.classList.remove('drag')"
-    ondrop="handleDrop(event)">
-    <div style="font-size:2rem">📦</div>
-    <strong>Click to select</strong> or drag & drop
-    <p>openclaw-backup_*.tar.gz</p>
-    <input type="file" id="file-input" accept=".tar.gz,.gz" onchange="uploadFile(this.files[0])">
-  </div>
-  <div id="upload-status" class="status"></div>
-</div>
-
-<!-- Backup List -->
-<div class="card">
-  <h2>Available Backups (${backups.length})</h2>
-  ${backups.length === 0 ? '<p class="empty">No backups yet. Create one above.</p>' : `
-  <table>
-    <tr><th>Filename</th><th>Size</th><th>Created</th><th>Actions</th></tr>
-    ${backups.map(b => `
-    <tr>
-      <td><span class="tag">tar.gz</span> ${b.filename}</td>
-      <td>${b.sizeHuman}</td>
-      <td>${new Date(b.createdAt).toLocaleString()}</td>
-      <td class="actions">
-        <a class="btn btn-gray" href="${b.downloadUrl}" download>⬇ Download</a>
-        <button class="btn btn-success" onclick="restore('${b.filename}', true)">👁 Dry Run</button>
-        <button class="btn btn-danger" onclick="restore('${b.filename}', false)">♻️ Restore</button>
-      </td>
-    </tr>`).join('')}
-  </table>`}
-</div>
-
-<script>
-const token = '${TOKEN}';
-const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
-
-// Detect if accessed remotely — hide destructive actions
-const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '::1';
-if (!isLocalhost) {
-  document.getElementById('remote-notice').style.display = 'block';
-  document.getElementById('create-card').style.display = 'none';
-  // Hide restore buttons (rendered server-side) after DOM loads
-  document.querySelectorAll('.btn-danger').forEach(b => b.style.display = 'none');
-}
-
-async function createBackup() {
-  const el = document.getElementById('create-status');
-  el.className = 'status ok'; el.textContent = '⏳ Creating backup...'; el.style.display = 'block';
-  try {
-    const r = await fetch('/backup', { method: 'POST', headers });
-    const d = await r.json();
-    if (r.ok) {
-      el.textContent = '✅ ' + d.message + ' — ' + d.filename;
-      setTimeout(() => location.reload(), 1500);
-    } else { el.className = 'status err'; el.textContent = '❌ ' + (d.error || 'Failed'); }
-  } catch(e) { el.className = 'status err'; el.textContent = '❌ ' + e.message; }
-}
-
-async function uploadFile(file) {
-  if (!file) return;
-  const el = document.getElementById('upload-status');
-  el.className = 'status ok'; el.textContent = '⏳ Uploading ' + file.name + '...'; el.style.display = 'block';
-  const fd = new FormData(); fd.append('backup', file);
-  try {
-    const r = await fetch('/upload', { method: 'POST', headers, body: fd });
-    const d = await r.json();
-    if (r.ok) { el.textContent = '✅ Uploaded: ' + d.filename; setTimeout(() => location.reload(), 1000); }
-    else { el.className = 'status err'; el.textContent = '❌ ' + (d.error || 'Upload failed'); }
-  } catch(e) { el.className = 'status err'; el.textContent = '❌ ' + e.message; }
-}
-
-function handleDrop(e) {
-  e.preventDefault();
-  document.getElementById('drop-zone').classList.remove('drag');
-  const file = e.dataTransfer.files[0];
-  if (file) uploadFile(file);
-}
-
-async function restore(filename, dryRun) {
-  const label = dryRun ? 'Dry run' : 'RESTORE';
-  if (!dryRun) {
-    const msg = '⚠️ RESTORE will OVERWRITE your current OpenClaw data with:\\n\\n' + filename + '\\n\\nHave you reviewed the dry-run output first?\\n\\nType YES to confirm:';
-    const input = prompt(msg);
-    if (input !== 'YES') { alert('Aborted. Run dry-run first to review what will change.'); return; }
-  }
-  const el = document.getElementById('create-status');
-  el.className = 'status ok'; el.textContent = '⏳ ' + label + ' in progress...'; el.style.display = 'block';
-  try {
-    const params = new URLSearchParams();
-    if (token) params.set('token', token);
-    if (dryRun) params.set('dry_run', '1');
-    else params.set('confirm', '1');
-    const url = '/restore/' + encodeURIComponent(filename) + '?' + params.toString();
-    const r = await fetch(url, { method: 'POST', headers });
-    const d = await r.json();
-    if (r.ok) {
-      el.textContent = '✅ ' + label + ' complete.';
-      if (d.output) {
-        const pre = document.createElement('pre');
-        pre.style = 'margin-top:0.75rem;font-size:0.75rem;color:#94a3b8;white-space:pre-wrap;max-height:300px;overflow-y:auto';
-        pre.textContent = d.output;
-        el.appendChild(pre);
-      }
-    } else { el.className = 'status err'; el.textContent = '❌ ' + (d.error || 'Failed') + (d.hint ? ' — ' + d.hint : ''); }
-  } catch(e) { el.className = 'status err'; el.textContent = '❌ ' + e.message; }
-}
-</script>
-</body>
-</html>`;
-  res.writeHead(200, { 'Content-Type': 'text/html' });
+  const rows = backups.map(b =>
+    `<tr><td><span class="tag">tar.gz</span> ${b.filename}</td><td>${b.sizeHuman}</td>` +
+    `<td>${new Date(b.createdAt).toLocaleString()}</td>` +
+    `<td class="actions"><a class="btn btn-gray" href="${b.downloadUrl}" download>⬇ Download</a>` +
+    `<button class="btn btn-success restore-btn" data-file="${b.filename}">👁 Dry Run</button>` +
+    `<button class="btn btn-danger restore-btn" data-file="${b.filename}" data-confirm="1">♻️ Restore</button></td></tr>`
+  ).join('');
+  html = html
+    .replace('{{TOKEN}}', TOKEN)
+    .replace('{{BACKUP_COUNT}}', String(backups.length))
+    .replace('{{BACKUP_ROWS}}', backups.length ? rows : '<tr><td colspan="4" class="empty">No backups yet.</td></tr>');
+  res.writeHead(200, { 'Content-Type': 'text/html', ...SECURE_HEADERS });
   res.end(html);
 }
 
-// ── Request Router ────────────────────────────────────────────────────────────
+// ── Router ────────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
-  const urlPath = parseUrlPath(req.url);
+  const urlPath = new URL('http://x' + req.url).pathname;
 
-  // Health check — unauthenticated, returns minimal read-only info only
-  // Does NOT expose backup dir path or file listings (those require auth)
+  // /health — no auth, minimal info only
   if (req.method === 'GET' && urlPath === '/health') {
     return json(res, 200, { status: 'ok', service: 'myclaw-backup' });
   }
 
-  // Auth
+  // All other routes require auth
   if (!checkAuth(req)) {
     return json(res, 401, { error: 'Unauthorized. Pass ?token=xxx or Authorization: Bearer xxx' });
   }
 
   // GET / — Web UI
-  if (req.method === 'GET' && urlPath === '/') {
-    return serveUI(req, res);
-  }
+  if (req.method === 'GET' && urlPath === '/') return serveUI(req, res);
 
   // GET /backups — list
   if (req.method === 'GET' && urlPath === '/backups') {
     return json(res, 200, { backups: listBackups() });
   }
 
-  // POST /backup — create new backup (localhost-only: triggers shell execution)
+  // POST /backup — LOCALHOST ONLY (shell execution)
   if (req.method === 'POST' && urlPath === '/backup') {
-    const remoteIp = req.socket.remoteAddress || '';
-    const isLocalhost = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
-    if (!isLocalhost) {
-      return json(res, 403, {
-        error: 'Creating backups via HTTP is only allowed from localhost.',
-        reason: 'Shell execution endpoints are restricted to 127.0.0.1 to prevent remote code execution risk.'
-      });
+    if (!isLocalhost(req)) {
+      return json(res, 403, { error: 'POST /backup is localhost-only.', hint: 'Run backup.sh directly on this machine.' });
     }
     try {
-      execSync(`chmod +x "${BACKUP_SCRIPT}"`, { stdio: 'ignore' });
-      const output = execSync(`bash "${BACKUP_SCRIPT}" "${BACKUP_DIR}"`, {
-        encoding: 'utf8',
-        timeout: 120000
-      });
-      const backups = listBackups();
-      const latest = backups[0];
-      return json(res, 200, {
-        message: 'Backup created',
-        filename: latest?.filename,
-        size: latest?.sizeHuman,
-        downloadUrl: latest?.downloadUrl,
-        output: output.replace(/\x1b\[[0-9;]*m/g, '') // strip ANSI
-      });
-    } catch (e) {
-      return json(res, 500, { error: e.message, output: e.stdout });
-    }
+      execSync(`chmod +x "${BACKUP_SH}"`);
+      const out = execSync(`bash "${BACKUP_SH}" "${BACKUP_DIR}"`, { encoding: 'utf8', timeout: 120000 });
+      const latest = listBackups()[0];
+      return json(res, 200, { message: 'Backup created', filename: latest?.filename, size: latest?.sizeHuman,
+                               downloadUrl: latest?.downloadUrl, output: out.replace(/\x1b\[[0-9;]*m/g, '') });
+    } catch (e) { return json(res, 500, { error: e.message }); }
   }
 
   // GET /download/:filename
@@ -374,101 +168,58 @@ const server = http.createServer((req, res) => {
       return json(res, 404, { error: 'File not found' });
     }
     const stat = fs.statSync(filePath);
-    res.writeHead(200, {
-      'Content-Type': 'application/gzip',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length': stat.size
-    });
+    res.writeHead(200, { 'Content-Type': 'application/gzip',
+      'Content-Disposition': `attachment; filename="${filename}"`, 'Content-Length': stat.size });
     fs.createReadStream(filePath).pipe(res);
     return;
   }
 
-  // POST /upload — upload backup file
+  // POST /upload — allowed from remote (upload only, no execution)
   if (req.method === 'POST' && urlPath === '/upload') {
-    parseMultipart(req, (err, file) => {
+    return parseMultipart(req, (err, file) => {
       if (err) return json(res, 400, { error: err.message });
-      if (!file.filename.endsWith('.tar.gz')) {
-        return json(res, 400, { error: 'Only .tar.gz files accepted' });
-      }
+      if (!file.filename.endsWith('.tar.gz')) return json(res, 400, { error: 'Only .tar.gz files accepted' });
       const dest = path.join(BACKUP_DIR, path.basename(file.filename));
       fs.writeFileSync(dest, file.data);
       fs.chmodSync(dest, 0o600);
-      return json(res, 200, {
-        message: 'Upload successful',
-        filename: file.filename,
-        size: formatBytes(file.data.length),
-        restoreUrl: `/restore/${file.filename}${TOKEN ? '?token=' + TOKEN : ''}`
-      });
+      return json(res, 200, { message: 'Upload successful', filename: file.filename, size: fmt(file.data.length) });
     });
-    return;
   }
 
-  // POST /restore/:filename[?dry_run=1&confirm=1]
-  // ── SECURITY: restore is localhost-only ──────────────────────────────────
-  // Even with a valid token, restore (which overwrites ~/.openclaw) is only
-  // allowed from 127.0.0.1 / ::1. Remote access can download and upload, but
-  // cannot trigger a restore. This limits blast radius if the token leaks.
+  // POST /restore/:filename — LOCALHOST ONLY (shell execution)
   if (req.method === 'POST' && urlPath.startsWith('/restore/')) {
-    const remoteIp = req.socket.remoteAddress || '';
-    const isLocalhost = remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp === '::ffff:127.0.0.1';
-    if (!isLocalhost) {
+    if (!isLocalhost(req)) {
       return json(res, 403, {
-        error: 'Restore is only allowed from localhost.',
-        reason: 'For security, the /restore endpoint is restricted to 127.0.0.1. Download the backup file and run restore.sh locally instead.',
-        hint: 'bash scripts/restore.sh <archive.tar.gz> --dry-run'
+        error: 'POST /restore is localhost-only.',
+        hint: 'Download the backup file and run: bash restore.sh <archive> --dry-run'
       });
     }
-
     const filename = path.basename(decodeURIComponent(urlPath.slice('/restore/'.length)));
     const filePath = path.join(BACKUP_DIR, filename);
-    const params = new URL('http://x' + req.url).searchParams;
+    const params   = new URL('http://x' + req.url).searchParams;
     const isDryRun = params.get('dry_run') === '1';
-    const isConfirmed = params.get('confirm') === '1';
-
-    if (!fs.existsSync(filePath)) {
-      return json(res, 404, { error: 'Backup file not found: ' + filename });
+    const confirmed = params.get('confirm') === '1';
+    if (!fs.existsSync(filePath)) return json(res, 404, { error: 'File not found: ' + filename });
+    if (!isDryRun && !confirmed) {
+      return json(res, 400, { error: 'Add ?confirm=1 to apply restore. Run ?dry_run=1 first to preview.' });
     }
-
-    // Require explicit confirm=1 for destructive restores
-    if (!isDryRun && !isConfirmed) {
-      return json(res, 400, {
-        error: 'Restore requires explicit confirmation.',
-        hint: 'First run with ?dry_run=1 to preview, then add ?confirm=1 to apply.',
-        dryRunUrl: `/restore/${filename}?dry_run=1`,
-        confirmUrl: `/restore/${filename}?confirm=1`
-      });
-    }
-
     try {
-      execSync(`chmod +x "${RESTORE_SCRIPT}"`, { stdio: 'ignore' });
-      // Pass 'yes' via stdin to satisfy the interactive confirmation in restore.sh
-      const cmd = isDryRun
-        ? `bash "${RESTORE_SCRIPT}" "${filePath}" --dry-run`
-        : `echo 'yes' | bash "${RESTORE_SCRIPT}" "${filePath}"`;
-      const output = execSync(cmd, { encoding: 'utf8', timeout: 180000 });
-      return json(res, 200, {
-        message: isDryRun ? 'Dry run complete' : 'Restore complete',
-        dryRun: isDryRun,
-        output: output.replace(/\x1b\[[0-9;]*m/g, '')
-      });
-    } catch (e) {
-      return json(res, 500, { error: e.message, output: (e.stdout || '').replace(/\x1b\[[0-9;]*m/g, '') });
-    }
+      execSync(`chmod +x "${RESTORE_SH}"`);
+      const cmd = isDryRun ? `bash "${RESTORE_SH}" "${filePath}" --dry-run`
+                           : `echo 'yes' | bash "${RESTORE_SH}" "${filePath}"`;
+      const out = execSync(cmd, { encoding: 'utf8', timeout: 180000 });
+      return json(res, 200, { message: isDryRun ? 'Dry run complete' : 'Restore complete',
+                               dryRun: isDryRun, output: out.replace(/\x1b\[[0-9;]*m/g, '') });
+    } catch (e) { return json(res, 500, { error: e.message, output: (e.stdout||'').replace(/\x1b\[[0-9;]*m/g, '') }); }
   }
 
   json(res, 404, { error: 'Not found' });
 });
 
-// ── Start ─────────────────────────────────────────────────────────────────────
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🦞 OpenClaw Backup Server (token protected)`);
+  console.log(`\n🦞 MyClaw Backup Server`);
+  console.log(`   Token protected | Localhost-only for /backup and /restore`);
   console.log(`   http://localhost:${PORT}/?token=${TOKEN}`);
-  console.log(`   Backup dir: ${BACKUP_DIR}`);
-  console.log(`   ⚠️  Do not expose this port to the public internet without TLS.`);
-  console.log('');
+  console.log(`   ⚠️  Do not expose this port to the internet without TLS.\n`);
 });
-
-server.on('error', err => {
-  console.error('Server error:', err.message);
-  process.exit(1);
-});
+server.on('error', err => { console.error('Server error:', err.message); process.exit(1); });
